@@ -1,63 +1,82 @@
-<html>
+<!doctype html>
+<html ng-app="AccidentalBotApp" ng-controller="AppController">
     <head>
         <title>Showbot</title>
-        <script src="jquery-1.11.1.min.js"></script>
-        <script src="handlebars-v1.3.0.js"></script>
-        <script src="showbot.js"></script>
         <script src="moment-2.6.0.min.js"></script>
+        <script src="angular-1.2.18.min.js"></script>
+        <script src="showbot.js"></script>
+        <style>
+            h1, h2 {
+                font-family: Georgia, serif;
+            }
+            body {
+                font-family: sans-serif;
+                width: 40em;
+                margin: auto;
+            }
+            table {
+                width: 100%;
+                text-align: left;
+            }
+            .message {
+                font-size: 500%; text-align: center;
+            }
+        </style>
     </head>
     <body>
-        <script id="titleRow" type="text/x-handlebars-template">
-            <tr data-id="{{id}}">
-                <td><span class="votes">{{votes}}</span>&nbsp;<a class="vote" href="#" onclick="return Showbot.Bot.voteHandler(this);">+1</a></td>
-                <td>{{title}}</td>
-                <td>{{author}}</td>
-                <td class="time" data-time="{{{time}}}">{{timeAgo time}}</td>
-            </tr>
-        </script>
-        <script id="linkRow" type="text/x-handlebars-template">
-            <tr data-id="{{id}}">
-                <td><a href="{{{link}}}" onclick="return Showbot.Bot.linkHandler(this);">Link</a></td>
-                <td>{{author}}</td>
-                <td class="time" data-time="{{{time}}}">{{timeAgo time}}</td>
-        </script>
+        <h1>
+            Showbot
+        </h1>
 
-        <script id="connectingMessage" type="text/x-handlebars-template">
+        <div class="message" ng-show="status == 'connecting'">
             Connecting...
-        </script>
-
-        <div class="message" style='font-size: 500%; text-align: center; /* position: absolute; top: 50%; height: 2em; margin-top: -1em; width: 100%;*/'>
         </div>
 
-        <h2>Titles</h2>
-        <table class="titles">
-            <thead>
-                <tr>
-                    <th>Votes</th>
-                    <th>Title</th>
-                    <th>Author</th>
-                    <th>Time</th>
-                </tr>
-            </thead>
-            <tbody>
-            </tbody>
-        </table>
+        <div ng-show="status == 'connected' || titles.length">
+            <h2>Titles</h2>
+            <table class="titles">
+                <thead>
+                    <tr>
+                        <th>Votes</th>
+                        <th>Title</th>
+                        <th>Author</th>
+                        <th>Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr ng-repeat="title in titles | orderBy:titleScore:true" ng-show="titleScore(title) > 0">
+                      <td>
+                          <span class="votes">{{title.votes}}</span>&nbsp;<a
+                              class="vote" href ng-click="voteFor(title, $event)"
+                              ng-show="!title.voted && status == 'connected'"
+                          >+1</a></td>
+                      <td>{{title.title}}</td>
+                      <td>{{title.author}}</td>
 
-        <h2>Links</h2>
-        <table class="links">
-            <thead>
-                <tr>
-                    <th>Link</th>
-                    <th>Author</th>
-                    <th>Time</th>
-                </tr>
-            </thead>
-            <tbody>
-            </tbody>
-        </table>
+                      <td class="time">{{title.time | timeAgo}}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
 
-        <script type="text/javascript">
-            Showbot.Bot.init();
-        </script>
+        <div ng-show="status == 'connected' || links.length">
+            <h2>Links</h2>
+            <table class="links">
+                <thead>
+                    <tr>
+                        <th>Link</th>
+                        <th>Author</th>
+                        <th>Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr ng-repeat="link in links">
+                        <td><a href="{{link.link}}" ng-click="handleLink(link, $event)">Link</a></td>
+                        <td>{{link.author}}</td>
+                        <td class="time">{{link.time | timeAgo}}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
     </body>
 </html>

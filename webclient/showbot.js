@@ -1,68 +1,65 @@
 'use strict';
 
-window.Showbot = window.Showbot || {};
+var app = angular.module('AccidentalBotApp', []);
+var scope = null;
 
-Showbot.Bot = (function ($) {
-
-	// Templates
-	var titleRowTemplate = null;
-    var linkRowTemplate = null;
-	var connectingTemplate = null;
-
-	// State
-	var connection = null;
-
-	function init() {
-		$(function () {
-            titleRowTemplate = titleRowTemplate || Handlebars.compile($("#titleRow").html());
-            linkRowTemplate = linkRowTemplate || Handlebars.compile($('#linkRow').html());
-			connectingTemplate = connectingTemplate || Handlebars.compile($('#connectingMessage').html());
-
-			Handlebars.registerHelper('timeAgo', function (date) {
-                return moment(date).fromNow();
-			});
-
-			connectSocket();
-
-			// Show the connecting message
-			$(".message").html(connectingTemplate());
-		});
-	}
-
-    function voteHandler(anchor) {
-        var id = $(anchor).closest('tr').data('id');
-        connection.send(JSON.stringify({operation: 'VOTE', id: id}));
-        var voteSpan = $(anchor).parent().find('.votes');
-        voteSpan.html(Number(voteSpan.html()) + 1);
-        $(anchor).remove();
-        return false;
+app.filter('timeAgo', function() {
+    return function(date) {
+        return moment(date).fromNow();
     }
+});
 
-    function linkHandler(anchor) {
-        var link = $(anchor).attr('href');
-        var answer = confirm("Tread carefully; these links aren't checked for safety!\nWould you like to go to the following URL?\n\n" + link);
+app.controller('AppController', function($scope) {
+    scope = $scope;
+
+    // State
+    var connection = null;
+
+    scope.titles = [];
+    scope.links = [];
+
+    scope.voteFor = function(title, event) {
+        event.preventDefault();
+        if (title.voted) return;
+
+        title.votes++;
+        title.voted = true;
+
+        connection.send(JSON.stringify({operation: 'VOTE', id: title.id}));
+    };
+
+    scope.handleLink = function(link, event) {
+        event.preventDefault();
+        var answer = confirm("Tread carefully; these links aren't checked for safety!\nWould you like to go to the following URL?\n\n" + link.link);
         if (answer) {
-            window.location = link;
+            window.location = link.link;
         }
-        return false;
-    }
+    };
 
-	function resetToDefault(){
-		$('.message').fadeOut(function () {
-			$('.tables').fadeIn();
-		});
-	}
+    scope.titleScore = function(title) {
+        // Ranks titles so that recently-posted high-scoring posts are near the top.
+        var pointsOfRankLostPerDay = 48;
+        var maxHoursAgeOfVisibleUnvotedPost = 12;
+        return Math.max(0, title.votes + pointsOfRankLostPerDay * (((new Date(title.time) - new Date) / 86400000) + maxHoursAgeOfVisibleUnvotedPost/24));
+
+    };
 
     function ping() {
         if (connection != null) {
             connection.send(JSON.stringify({operation: 'PING'}));
         }
-        $('.time').each(function () {
-            var time = $(this).data('time');
-            var ago = moment(time).fromNow();
-            $(this).html(moment($(this).data('time')).fromNow())
-        });
+        scope.$apply(); // re-render Angular templates to update timeAgos.
     }
+
+    connectSocket();
+
+    scope.status = 'connecting';
+
+    setInterval(function() {
+        // Ensure the scope is refreshed frequently enough for `fromNow` to
+        // respond quickly.
+        scope.$apply();
+    }, 1500);
 
 	function connectSocket() {
 		if (connection == null || connection.readyState == 3) {
@@ -74,69 +71,39 @@ Showbot.Bot = (function ($) {
             }
 
 			connection.onopen = function (event) {
-				resetToDefault();
-                setInterval(ping, 30000);
+                scope.status = 'connected';
+                scope.titles = [];
+                scope.links = [];
+				setInterval(ping, 30000);
 			};
 
 			connection.onmessage = function (message) {
-				var packet = JSON.parse(message.data);
-                //console.log(JSON.stringify(packet));
-                if (packet.operation == 'REFRESH') {
-                    // Refresh everything
-                    var titles = packet.titles;
-    				$('.titles tbody').empty();
-                    var html = "";
-					// Create all the rows
-					var titlesAlreadyVoted = [];
-                    for (var i=0; i < titles.length; ++i) {
-                        html += titleRowTemplate(titles[i]);
-						if (titles[i].voted) {
-							titlesAlreadyVoted.push(titles[i].id);
-						}
+                scope.$apply(function() {
+                    var packet = JSON.parse(message.data);
+                    console.log(JSON.stringify(packet));
+                    if (packet.operation == 'REFRESH') {
+                        scope.titles = packet.titles;
+                        scope.links = packet.links;
+                    } else if (packet.operation == 'NEW') {
+                        // New title
+                        scope.titles.push(packet.title);
+                    } else if (packet.operation == 'NEWLINK') {
+                        scope.links.push(packet.link);
+                    } else if (packet.operation == 'VOTE') {
+                        for (var i = 0; i < scope.titles.length; i++) {
+                            if (scope.titles[i].id === packet.id) {
+                                scope.titles[i].votes = packet.votes;
+                            }
+                        }
+                    } else if (packet.operation == 'PONG') {
+                        // NOOP
                     }
-
-					// Add to the table
-                    $('.titles tbody').html(html);
-
-					// Remove all the anchors for already voted titles
-					console.log(JSON.stringify(titlesAlreadyVoted));
-					for (var i=0; i < titlesAlreadyVoted.length; ++i) {
-						$('tr[data-id=' + titlesAlreadyVoted[i] + ']').find('a').remove();
-					}
-
-					// Show the table
-                    if (!$('.titles').is(':visible')) {
-                        $('.titles').fadeIn();
-                    }
-
-                    var links = packet['links'];
-                    html = '';
-                    for (var i=0; i < links.length; ++i) {
-                        html += linkRowTemplate(links[i]);
-                    }
-                    $('.links tbody').html(html);
-                    if (!$('.links').is(':visible')) {
-                        $('.links').fadeIn();
-                    }
-                } else if (packet.operation == 'NEW') {
-                    // New title
-                    $('.titles tbody').append(titleRowTemplate(packet.title));
-                } else if (packet.operation == 'NEWLINK') {
-                    $('.links tbody').append(linkRowTemplate(packet.link));
-                } else if (packet.operation == 'VOTE') {
-                    // Modify a vote
-                    var row = $('tr[data-id=' + packet.id + ']');
-                    var span = $(row).find('.votes').html(packet.votes);
-                } else if (packet.operation == 'PONG') {
-                    // NOOP
-                }
+                });
 			};
 
 			connection.onclose = function (event) {
-				$('.tables').fadeOut(function () {
-                    $('.message').fadeIn();
-                });
-                setTimeout(connectSocket, 5000);
+                scope.status = 'connecting';
+				setTimeout(connectSocket, 5000);
                 clearInterval(ping);
 			};
 
@@ -147,10 +114,4 @@ Showbot.Bot = (function ($) {
 			setTimeout(connectSocket, 5000);
 		}
 	}
-
-	return {
-		init: init,
-        voteHandler: voteHandler,
-        linkHandler: linkHandler
-	};
-})(jQuery);
+});
