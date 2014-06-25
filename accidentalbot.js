@@ -15,6 +15,9 @@ var titles = [];
 var connections = [];
 var links = [];
 
+var client;
+
+
 function sendToAll(packet) {
     connections.forEach(function (connection) {
         connection.send(JSON.stringify(packet));
@@ -101,7 +104,7 @@ function handleHelp(from) {
     client.say(from, 'To see titles/links, go to: ' + webAddress);
 }
 
-var client = new irc.Client('irc.freenode.net', nick, {
+client = new irc.Client('irc.freenode.net', nick, {
     channels: [channel]
 });
 
@@ -159,30 +162,34 @@ var windowLimit = 50;
 var windowSize = 5000;
 var currentWindow = 0;
 var recentMessages = {};
-function floodedBy(socket) {
+var disconnectedThisWindow = {};
+function floodedBy(socket, floodMultiplier) {
     // To be called each time we get a message or connection attempt.
     //
     // If that address has been flooding us, we disconnect all open connections
     // from that address and return `true` to indicate that it should be
     // ignored. (They will not be prevented from re-connecting after waiting
     // for the next window.)
-    if (socket.readyState == socket.CLOSED) {
+    //
+    // Use floodMultiplier if a particular action be a stronger offence.
+    var address = getRequestAddress(socket.upgradeReq);
+
+    if (disconnectedThisWindow[address]) {
+        socket.terminate();
         return true;
     }
-
-    var address = getRequestAddress(socket.upgradeReq);
 
     var updatedWindow = 0 | ((new Date) / windowSize);
     if (currentWindow !== updatedWindow) {
         currentWindow = updatedWindow;
         recentMessages = {};
+        disconnectedThisWindow = {};
     }
 
-    if (address in recentMessages) {
-        recentMessages[address]++;
-    } else {
-        recentMessages[address] = 1;
+    if (!(address in recentMessages)) {
+        recentMessages[address] = 0
     }
+    recentMessages[address] += (floodMultiplier || 1);
 
     if (recentMessages[address] > windowLimit) {
         console.warn("Disconnecting flooding address: " + address);
@@ -191,11 +198,11 @@ function floodedBy(socket) {
         for (var i = 0, l = connections.length; i < l; i++) {
             if (getRequestAddress(connections[i].upgradeReq) === address &&
                 connections[i] != socket) {
-                console.log("Disconnecting additional connection.");
                 connections[i].terminate();
             }
         }
 
+        disconnectedThisWindow[address] = true;
         return true;
     } else {
         return false;
@@ -241,6 +248,11 @@ socketServer.on('connection', function(socket) {
     });
     socket.send(JSON.stringify({operation: 'REFRESH', titles: titlesWithVotes, links: links}));
 
+    socket.on('error', function(error) {
+        if (floodedBy(socket)) return;
+        console.error("Error from socket for " + address + ": " + error);
+    });
+
     socket.on('close', function () {
         console.log('Client disconnected: ' + address);
         connections.splice(connections.indexOf(socket), 1);
@@ -250,11 +262,19 @@ socketServer.on('connection', function(socket) {
         if (floodedBy(socket)) return;
 
         if (flags.binary) {
-            console.log("ignoring binary message from "  + address);
+            console.warn("Disconnecting "  + address + " due to binary message");
+            floodedBy(socket, Infinity);
             return;
         }
 
-        var packet = JSON.parse(data);
+        try {
+            var packet = JSON.parse(data);
+        } catch (e) {
+            console.warn("Disconnecting "  + address + " due to invalid JSON");
+            floodedBy(socket, Infinity);
+            return;
+        }
+
         if (packet.operation === 'VOTE') {
             var matches = titles.findAll({id: packet['id']});
 
@@ -269,12 +289,39 @@ socketServer.on('connection', function(socket) {
                     console.log('ignoring duplicate vote by ' + address + ' for ' + upvoted['title']);
                 }
             } else {
-                console.log('no matches for id: ' + packet['id']);
+                // Make votes for non-existent IDs count 5x as strongly as flooding 
+                floodedBy(socket, 4);
+                console.log('' + address + ' attempted to vote for non-existent id: ' + packet['id']);
             }
         } else if (packet.operation === 'PING') {
             socket.send(JSON.stringify({operation: 'PONG'}));
+            console.log("sending PONG reply to " + address)
         } else {
-            console.log("Don't know what to do with " + packet['operation']);
+            console.warn("" + address + " requested non-existent operation " + packet['operation']);
         }
     });
 });
+
+
+// Automatically connect to IRC if this file is run directly, not require()d.
+function main() {
+    client.connect();
+}
+
+if (require.main === module) {
+    main();
+}
+
+
+// currently only used for testing
+module.exports = {
+    main: main,
+
+    _getStateForTest: function() {
+        return {
+            client: client,
+            port: port,
+            socketServer: socketServer
+        };
+    }
+};
