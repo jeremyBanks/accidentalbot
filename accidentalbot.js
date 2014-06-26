@@ -18,6 +18,25 @@ var links = [];
 var client;
 
 
+// Automatically connect to IRC if this file is run directly, not require()d.
+function main() {
+    client.connect();
+
+    if (process.send) {
+        process.on('message', function(data) {
+            if (data.method == 'load') {
+                console.log("Restarting saved state");
+                titles = data.params.state.titles;
+                links = data.params.state.links;
+            }
+        });
+
+        process.send({
+            method: 'request-load'
+        });
+    }
+}
+
 function sendToAll(packet) {
     connections.forEach(function (connection) {
         connection.send(JSON.stringify(packet));
@@ -25,7 +44,20 @@ function sendToAll(packet) {
 }
 
 function saveBackup() {
-    // TODO: Figure out what to do here.
+    if (process.send) {
+        console.log("Saving state");
+        process.send({
+            method: 'save',
+            params: {
+                state: {
+                    titles: titles,
+                    links: links
+                }
+            }
+        });
+    } else {
+        console.log("Save not implemented.");
+    }
 }
 
 function handleNewSuggestion(from, message) {
@@ -110,7 +142,7 @@ client = new irc.Client('irc.freenode.net', nick, {
 
 client.addListener('join', function (channel, nick, message) {
     console.log('Joined channel ' + channel);
-    setInterval(saveBackup, 300000);
+    setInterval(saveBackup, 30000);
 });
 
 client.addListener('message', function (from, to, message) {
@@ -302,11 +334,6 @@ socketServer.on('connection', function(socket) {
     });
 });
 
-
-// Automatically connect to IRC if this file is run directly, not require()d.
-function main() {
-    client.connect();
-}
 
 if (require.main === module) {
     main();

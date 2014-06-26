@@ -1,1 +1,1 @@
-web: node accidentalbot.js
+web: node runner.js
