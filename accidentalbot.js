@@ -23,6 +23,20 @@ client = new irc.Client('irc.freenode.net', 'accidentalbot', {
 // Automatically connect to IRC if this file is run directly, not require()d.
 function main() {
     client.connect();
+
+    if (process.send) {
+        process.on('message', function(data) {
+            if (data.method == 'load') {
+                console.log("Restarting saved state");
+                titles = data.params.state.titles;
+                links = data.params.state.links;
+            }
+        });
+
+        process.send({
+            method: 'request-load'
+        });
+    }
 }
 
 if (require.main === module) {
@@ -36,7 +50,20 @@ function sendToAll(packet) {
 }
 
 function saveBackup() {
-    // TODO: Figure out what to do here.
+    if (process.send) {
+        console.log("Saving state");
+        process.send({
+            method: 'save',
+            params: {
+                state: {
+                    titles: titles,
+                    links: links
+                }
+            }
+        });
+    } else {
+        console.log("Save not implemented.");
+    }
 }
 
 function handleNewSuggestion(from, message) {
@@ -117,7 +144,7 @@ function handleHelp(from) {
 
 client.addListener('join', function (channel, nick, message) {
     console.log('Joined channel ' + channel);
-    setInterval(saveBackup, 300000);
+    setInterval(saveBackup, 30000);
 });
 
 client.addListener('message', function (from, to, message) {
